@@ -264,13 +264,31 @@ function addMouseEvent(event, action) {
   render();
 }
 
-async function sendJsonToServer() {
+function finalizeMeasurement() {
+  if (!logData.session) return logData;
+
+  if (!logData.session.ended_at) {
+    logData.session.ended_at = isoNow();
+  }
+
+  if (!logData.session.finalized_at) {
+    logData.session.finalized_at = isoNow();
+    pushTaskEvent("measurement saved", {
+      task_completed: Boolean(logData.session.task_completed),
+      all_tasks_completed: Boolean(logData.session.all_tasks_completed)
+    });
+  }
+
+  return logData;
+}
+
+async function sendJsonToServer(payload) {
   const response = await fetch(SERVER_ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "application/json"
     },
-    body: JSON.stringify(logData)
+    body: JSON.stringify(payload)
   });
 
   if (!response.ok) {
@@ -280,10 +298,10 @@ async function sendJsonToServer() {
   return response.json().catch(() => ({}));
 }
 
-function downloadJson() {
-  const blob = new Blob([JSON.stringify(logData, null, 2)], { type: "application/json" });
+function downloadJson(payload = finalizeMeasurement()) {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
   const link = document.createElement("a");
-  const sessionId = logData.session?.id || createSessionId();
+  const sessionId = payload.session?.id || createSessionId();
   link.href = URL.createObjectURL(blob);
   link.download = `${sessionId}.json`;
   link.click();
@@ -339,21 +357,24 @@ document.getElementById("saveBtn").addEventListener("click", async () => {
   if (!logData.session) return;
 
   saveBtn.disabled = true;
-  logData.session.ended_at = isoNow();
-  pushTaskEvent("measurement saved", { task_completed: Boolean(logData.session.task_completed) });
+  const payload = finalizeMeasurement();
   setRecording(false);
 
   try {
-    const result = await sendJsonToServer();
+    const result = await sendJsonToServer(payload);
     showToast(`서버 전송 완료: ${result.file || "received"}`);
   } catch (error) {
     console.error(error);
     showToast("서버 전송 실패. 로컬 JSON 다운로드로 저장합니다.");
-    downloadJson();
+    downloadJson(payload);
   }
 });
 
-document.getElementById("downloadBtn").addEventListener("click", downloadJson);
+document.getElementById("downloadBtn").addEventListener("click", () => {
+  const payload = finalizeMeasurement();
+  setRecording(false);
+  downloadJson(payload);
+});
 
 document.getElementById("newTaskBtn").addEventListener("click", () => {
   if (!recording || !logData.session) {
